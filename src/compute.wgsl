@@ -66,20 +66,15 @@ fn naive_mem_coalesced(@builtin(global_invocation_id) gid: vec3<u32>) {
 const TILE: u32 = 16u   ;
 
 
+//load blocks into shared memory (workgroup)
 var<workgroup> shA: array<array<f32, TILE>, TILE>;
 var<workgroup> shB: array<array<f32, TILE>, TILE>;
-
 @compute @workgroup_size(TILE, TILE, 1)
 fn block_tiling(
   @builtin(workgroup_id)         wg_id: vec3<u32>,
   @builtin(local_invocation_id)  lid:   vec3<u32>,
   @builtin(global_invocation_id) gid:   vec3<u32>,
 ) {
-  // CUDA mapping:
-  // blockIdx  -> wg_id
-  // threadIdx -> lid
-  // i,j       -> gid.y, gid.x (since gid = wg_id*TILE + lid)
-
   let ty = lid.y;
   let tx = lid.x;
 
@@ -111,7 +106,6 @@ fn block_tiling(
     workgroupBarrier(); 
   }
 
-  // Store C[i, j]
   C[i * uniforms.N + j] = acc;
 }
 
