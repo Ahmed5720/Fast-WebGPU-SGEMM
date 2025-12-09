@@ -201,6 +201,7 @@ let benchmarkResults = {
   sgemm4_gflops: []
 };
 
+
 async function run_all_benchmarks() {
   const messageTarget = 'bench_message';
   console.log('zeby');
@@ -209,9 +210,13 @@ async function run_all_benchmarks() {
     benchmarkResults = {
       sizes: [],
       sgemm1_gflops: [],
+      sgemm1_stddev: [],
       sgemm2_gflops: [],
+      sgemm2_stddev: [],
       sgemm3_gflops: [],
-      sgemm4_gflops: []
+      sgemm3_stddev: [],
+      sgemm4_gflops: [],
+      sgemm4_stddev: []
     };
     
     const shapes = parseMNKTuples(
@@ -247,11 +252,10 @@ async function run_all_benchmarks() {
           }
         }
         
-        // Measured runs
-        let timeSum = 0;
+        // Measured runs - store individual times for stddev calculation
+        let times = [];
         let checksum = 0;
         for (let i = 0; i < runs; i++) {
-          //const t0 = performance.now();
           runtime = {start_t: 0, end_t: 0};
           const result = await sgemmFunc(m, n, k, alpha, array_a, array_b, runtime);
           
@@ -259,8 +263,8 @@ async function run_all_benchmarks() {
             await device.queue.onSubmittedWorkDone();
           }
           
-          //const t1 = performance.now();
-          timeSum += (runtime.end_t - runtime.start_t);
+          const elapsedTime = runtime.end_t - runtime.start_t;
+          times.push(elapsedTime);
           
           // Checksum
           if (result && result.length) {
@@ -273,27 +277,37 @@ async function run_all_benchmarks() {
           }
         }
         
-        const avgTimeMs = timeSum / runs;
+        // Calculate average time and GFLOPS
+        const avgTimeMs = times.reduce((sum, t) => sum + t, 0) / runs;
         const avgTimeSec = avgTimeMs / 1000.0;
         const gflops = (2.0 * m * n * k) / (avgTimeSec * 1e9);
         
-        // Store result for plotting
+        // Calculate standard deviation
+        const variance = times.reduce((sum, t) => sum + Math.pow(t - avgTimeMs, 2), 0) / runs;
+        const stdDevMs = Math.sqrt(variance);
+        const stdDevGflops = (2.0 * m * n * k) / ((avgTimeSec - stdDevMs/1000.0) * 1e9) - gflops;
+        
+        // Store results for plotting
         switch(kernelIdx) {
           case 0:
             benchmarkResults.sgemm1_gflops.push(gflops);
+            benchmarkResults.sgemm1_stddev.push(stdDevGflops);
             break;
           case 1:
             benchmarkResults.sgemm2_gflops.push(gflops);
+            benchmarkResults.sgemm2_stddev.push(stdDevGflops);
             break;
           case 2:
             benchmarkResults.sgemm3_gflops.push(gflops);
+            benchmarkResults.sgemm3_stddev.push(stdDevGflops);
             break;
           case 3:
             benchmarkResults.sgemm4_gflops.push(gflops);
+            benchmarkResults.sgemm4_stddev.push(stdDevGflops);
             break;
         }
         
-        message(`${kernelName} (${m}x${k}) * (${k}x${n}): avg ${avgTimeMs.toFixed(3)} ms — ${gflops.toFixed(2)} GFLOPS/s`, messageTarget);
+        message(`${kernelName} (${m}x${k}) * (${k}x${n}): avg ${avgTimeMs.toFixed(3)} ms ±${stdDevMs.toFixed(3)} ms — ${gflops.toFixed(2)} ±${stdDevGflops.toFixed(2)} GFLOPS/s`, messageTarget);
         console.log(`${kernelName} checksum:`, checksum);
       }
       
@@ -310,7 +324,7 @@ async function run_all_benchmarks() {
   }
 }
 
-// Function to plot benchmark results
+// Function to plot benchmark results with error bars
 function plotBenchmarkResults() {
   const canvas = document.getElementById('benchmarkPlot');
   if (!canvas) {
@@ -332,16 +346,23 @@ function plotBenchmarkResults() {
   const plotWidth = canvas.width - 2 * padding;
   const plotHeight = canvas.height - 2 * padding;
   
-  // Find min and max values for scaling
-  const allGflops = [
-    ...benchmarkResults.sgemm1_gflops,
-    ...benchmarkResults.sgemm2_gflops,
-    ...benchmarkResults.sgemm3_gflops,
-    ...benchmarkResults.sgemm4_gflops
-  ];
+  // Find min and max values for scaling (including error bars)
+  let minGflops = Infinity;
+  let maxGflops = -Infinity;
   
-  const maxGflops = Math.max(...allGflops);
-  const minGflops = Math.min(...allGflops);
+  for (let kernelIdx = 0; kernelIdx < 4; kernelIdx++) {
+    const gflopsArray = benchmarkResults[`sgemm${kernelIdx + 1}_gflops`];
+    const stddevArray = benchmarkResults[`sgemm${kernelIdx + 1}_stddev`];
+    
+    if (gflopsArray && gflopsArray.length > 0) {
+      for (let i = 0; i < gflopsArray.length; i++) {
+        const gflops = gflopsArray[i];
+        const stddev = stddevArray[i] || 0;
+        minGflops = Math.min(minGflops, gflops - stddev);
+        maxGflops = Math.max(maxGflops, gflops + stddev);
+      }
+    }
+  }
   
   // Add some padding to Y axis
   const yMax = maxGflops * 1.1;
@@ -350,7 +371,7 @@ function plotBenchmarkResults() {
   // Colors for different kernels
   const colors = [
     '#ff4242ff', // Red
-    '#b414d4ff', // Teal
+    '#b414d4ff', // Purple
     '#45B7D1', // Blue
     '#0da960ff'  // Green
   ];
@@ -414,7 +435,6 @@ function plotBenchmarkResults() {
   ctx.textBaseline = 'top';
   for (let i = 0; i < benchmarkResults.sizes.length; i++) {
     const x = padding + i * xStep;
-    //ctx.fillText(benchmarkResults.sizes[i], x, canvas.height - padding + 10);
     
     // Rotate text if too many labels
     if (benchmarkResults.sizes.length > 5) {
@@ -426,8 +446,10 @@ function plotBenchmarkResults() {
     }
   }
   
- for (let kernelIdx = 0; kernelIdx < 4; kernelIdx++) {
+  // Draw error bars and connecting lines for each kernel
+  for (let kernelIdx = 0; kernelIdx < 4; kernelIdx++) {
     const gflopsArray = benchmarkResults[`sgemm${kernelIdx + 1}_gflops`];
+    const stddevArray = benchmarkResults[`sgemm${kernelIdx + 1}_stddev`];
     
     if (!gflopsArray || gflopsArray.length === 0) continue;
     
@@ -449,13 +471,43 @@ function plotBenchmarkResults() {
     }
     ctx.stroke();
     
-    // Draw data points on top of the lines
-    ctx.fillStyle = colors[kernelIdx];
+    // Draw error bars and data points
     for (let i = 0; i < gflopsArray.length; i++) {
       const x = padding + i * xStep;
       const y = canvas.height - padding - 
                 ((gflopsArray[i] - yMin) / (yMax - yMin)) * plotHeight;
       
+      const stddev = stddevArray[i] || 0;
+      
+      // Draw error bar
+      if (stddev > 0) {
+        const errorHeight = (stddev / (yMax - yMin)) * plotHeight;
+        const errorTop = y - errorHeight;
+        const errorBottom = y + errorHeight;
+        
+        // Vertical error bar line
+        ctx.strokeStyle = colors[kernelIdx];
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, errorTop);
+        ctx.lineTo(x, errorBottom);
+        ctx.stroke();
+        
+        // Error bar caps
+        const capWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(x - capWidth/2, errorTop);
+        ctx.lineTo(x + capWidth/2, errorTop);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(x - capWidth/2, errorBottom);
+        ctx.lineTo(x + capWidth/2, errorBottom);
+        ctx.stroke();
+      }
+      
+      // Draw data point on top of error bar
+      ctx.fillStyle = colors[kernelIdx];
       ctx.beginPath();
       ctx.arc(x, y, 5, 0, Math.PI * 2);
       ctx.fill();
@@ -464,7 +516,13 @@ function plotBenchmarkResults() {
       ctx.strokeStyle = 'white';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.strokeStyle = colors[kernelIdx]; // Reset to original color
+      
+      // Draw value label near point
+      ctx.fillStyle = colors[kernelIdx];
+      ctx.font = '10px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`${gflopsArray[i].toFixed(1)}±${stddev.toFixed(1)}`, x, y - 10);
     }
   }
   
@@ -498,14 +556,20 @@ function plotBenchmarkResults() {
   ctx.save();
   ctx.translate(20, canvas.height / 2);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillText('Performance (GFLOPS/s)', 0, 0);
+  ctx.fillText('Performance (GFLOPS/s) ± std dev', 0, 0);
   ctx.restore();
   
   // Add title
   ctx.font = 'bold 16px Arial';
   ctx.fillStyle = '#333';
   ctx.textAlign = 'center';
-  ctx.fillText('SGEMM Kernel Performance Comparison', canvas.width / 2, 20);
+  ctx.fillText('SGEMM Kernel Performance Comparison with Standard Deviation', canvas.width / 2, 20);
+  
+  // Add note about error bars
+  ctx.font = '10px Arial';
+  ctx.fillStyle = '#666';
+  ctx.textAlign = 'left';
+  ctx.fillText('Error bars show ±1 standard deviation', padding, canvas.height - 35);
 }
 
 // Helper function to display the plot in the UI
@@ -525,7 +589,11 @@ function displayPlot() {
   
   // Ensure canvas exists and plot results
   plotBenchmarkResults();
-}
+    
+  } 
+
+
+
 async function run_benchmark() {
   const messageTarget = 'bench_message';
   try {
