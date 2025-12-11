@@ -10,7 +10,7 @@ We start from a naive kernel and iteratively apply four optimizations:
 3) block tiling using workgroup (“shared”) memory  
 4) vectorized loads via `vec4<f32>`  
 
-The goal: close the gap between portable WebGPU kernels and heavily tuned vendor libraries.
+
 
 ---
 
@@ -65,7 +65,7 @@ Why it helps:
 
 We load tiles of `A` and `B` into `var<workgroup>` memory, then reuse them across many multiply-accumulate operations.
 
-Why it helps (biggest win):
+Why it helps:
 - Dramatically reduces global memory traffic
 - Increases arithmetic intensity by reusing loaded data
 - Synchronization via barriers ensures correctness between load/compute phases
@@ -90,7 +90,7 @@ Why it might not help here:
 
 ## Results
 
-Across the iterative improvements, peak performance reached **~1480 GFLOP/s** in our best kernel configuration (on an RTX 5060 Ti test system), roughly a **~5× speedup** over earlier working variants and about **~7% of theoretical FP32 peak** (device-dependent).
+Across the iterative improvements, peak performance reached **~1480 GFLOP/s** in our best kernel configuration (on an RTX 5060 Ti test system), roughly a **~5× speedup** over earlier working variants and about **~8% of theoretical FP32 peak** (device-dependent).
 
 ![Overall performance](public/overall.png)
 
@@ -107,7 +107,7 @@ Across the iterative improvements, peak performance reached **~1480 GFLOP/s** in
 
 ## Limitations
 
-- Accurate GPU timing in WebGPU is tricky without timestamp queries.
+- Accurate GPU timing in WebGPU is tricky without timestamp queries
 - Browser profiling tools are limited (largely for security reasons).
 - Portable shaders can’t match vendor-tuned kernels that exploit architecture-specific scheduling and microkernels.
 
@@ -115,8 +115,8 @@ Across the iterative improvements, peak performance reached **~1480 GFLOP/s** in
 
 ## Future Work
 a few ideas to I'd like to pursue:
-- **Register tiling**: each thread computes multiple `C` outputs to increase reuse
-- **Systematic parameter sweeps**: tune `(BM, BN, BK)` and per-thread work
+- **use timestamp queries**: I was unable to use it at first so all the timings I got was using the `performance.now()` method which I now realize may be quite inaccurate. Later I realized timestamp queries could be enabled with the `webgpu developer features flag` 
+- **Register tiling**: each thread computes multiple `C` outputs to increase reuse - I have so far been unsuccesful with that which is why results were not included
 - **Reduce barrier overhead**: double-buffer tiles / prefetch next tile while computing current
 
 ---
